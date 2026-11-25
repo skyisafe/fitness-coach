@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""fitness-coach 自动生成测试（SCK Phase 4.6）
+"""fitness-coach 自动测试（v3.0.0）
 
-覆盖 validate/audit 盲区：路由一致性、领域约束（起始重量/跑步机参数/周期规则）、
-边界用例、输出模板完整性。运行：python3 tests/test.py
+覆盖：文件完整性 / 双语 README / frontmatter / 公式系数 / 数值事实 / 路由锚点 /
+排期算术 / 输出格式 / 文档一致性 / 证据来源 / 安全边界 / 模板 / evals / 跨文件一致性 / 卫生。
+运行：python3 tests/test.py
 """
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -12,17 +14,18 @@ from pathlib import Path
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 passed = 0
 failed = 0
+failures = []
 
 
 def ok(msg):
     global passed
     passed += 1
-    print(f"  ✅ {msg}")
 
 
 def fail(msg):
     global failed
     failed += 1
+    failures.append(msg)
     print(f"  ❌ {msg}")
 
 
@@ -38,168 +41,326 @@ def read(p):
     return (SKILL_ROOT / p).read_text(encoding="utf-8")
 
 
-# ---------- T1 文件完整性 ----------
-section("T1 文件完整性")
+def headings(text):
+    return re.findall(r"^#{2,4}\s+(.+)$", text, re.M)
+
+
+# ---------- T1 文件完整性 / 双语 ----------
+section("T1 文件完整性 / 双语 README")
 DECLARED = [
-    "SKILL.md", "README.md", "DESIGN.md", "CHANGELOG.md",
-    "references/goals.md", "references/venues.md", "references/body-data.md",
+    "SKILL.md", "README.md", "README.zh-CN.md", "DESIGN.md", "CHANGELOG.md", "LICENSE",
+    "evals/evals.json", "evals/README.md", "tests/test.py", ".github/workflows/test.yml",
+    "references/goals.md", "references/venues.md", "references/templates.md",
+    "references/technique.md", "references/populations.md", "references/body-data.md",
     "references/nutrition.md", "references/programs.md", "references/adjustments.md",
+    "references/evidence.md",
 ]
 for f in DECLARED:
     check((SKILL_ROOT / f).is_file(), f"存在: {f}")
 
 readme = read("README.md")
-check("├──" in readme or "└──" in readme, "README.md 含树形结构（文件表委托）")
-tree_files = [m.rstrip("/") for m in re.findall(r"(?:├──|└──)\s+(\S+)", readme)]
-missing_in_tree = [f for f in DECLARED
-                   if f not in tree_files and Path(f).name not in tree_files]
-check(not missing_in_tree, f"README 树覆盖全部声明文件（缺: {missing_in_tree or '无'}）")
-check("tests" in readme, "README 树含 tests/（自动化测试）")
+zh_readme = read("README.zh-CN.md")
+check("README.zh-CN.md" in readme and "简体中文" in readme, "README.md 含双语切换入口")
+check("README.md" in zh_readme and "English" in zh_readme, "README.zh-CN.md 含双语切换入口")
+check("MIT License" in read("LICENSE"), "LICENSE 为 MIT")
+check("python3 tests/test.py" in read(".github/workflows/test.yml"), "CI 运行 tests/test.py")
+
+for name, body in (("README.md", readme), ("README.zh-CN.md", zh_readme)):
+    tree = [m.rstrip("/") for m in re.findall(r"(?:├──|└──)\s+(\S+)", body)]
+    missing = [f for f in DECLARED if Path(f).name not in tree]
+    check(not missing, f"{name} 树覆盖全部声明文件（缺: {missing or '无'}）")
+    check("tests" in tree and "evals" in tree, f"{name} 树含 tests/ 与 evals/")
 
 # ---------- T2 Frontmatter 质量 ----------
 section("T2 Frontmatter 质量")
 skill = read("SKILL.md")
 fm = skill.split("---")[1]
 name_m = re.search(r"^name:\s*(\S+)", fm, re.M)
-ver_m = re.search(r"^version:\s*(\S+)", fm, re.M)
+ver_m = re.search(r"^version:\s*[\"']?([0-9.]+)", fm, re.M)
 desc_m = re.search(r"^description:\s*(.+)", fm, re.M)
+desc = desc_m.group(1) if desc_m else ""
 check(name_m and name_m.group(1) == "fitness-coach", "name = fitness-coach")
 check(ver_m is not None, "version 存在")
-check(desc_m is not None and "Use when" in desc_m.group(1), "description 含 Use when 触发语")
-check(desc_m and len(desc_m.group(1)) <= 200, f"description ≤200 字符（实际 {len(desc_m.group(1)) if desc_m else '?'}）")
+check(desc_m is not None and "Use when" in desc, "description 含 Use when 触发语")
+check(desc_m is not None and len(desc) <= 200, f"description ≤200 字符（实际 {len(desc)}）")
+check(180 <= len(desc) <= 200, "description 长度在 180~200（顶格利用预算）")
+for w in ["减脂", "减重", "减肥", "增肌", "塑形", "无器械", "跑步", "游泳", "徒步", "训练计划", "体脂"]:
+    check(w in desc, f"description 含触发词: {w}")
+check(re.search(r"7\s*天|瘦\s*\d+\s*斤|保证|根治|必瘦", desc) is None, "description 无过度承诺")
+check(re.search(r"^template:\s*\S+", fm, re.M) is not None, "frontmatter 含 template")
+trig_m = re.search(r"^triggers:\s*\n((?:\s+-\s+.+\n?)+)", fm, re.M)
+trigger_count = len(re.findall(r"^\s+-\s+", trig_m.group(1), re.M)) if trig_m else 0
+check(trigger_count >= 12, f"frontmatter triggers ≥12（实际 {trigger_count}）")
+budget_m = re.search(r"^token_budget:\s*\n((?:\s+\w+:\s*\d+\n?)+)", fm, re.M)
+for key in ["L0_trigger", "L1_core", "L2_deep", "hard_cap"]:
+    check(budget_m is not None and key in budget_m.group(1), f"token_budget 含 {key}")
 
 changelog = read("CHANGELOG.md")
-latest_ver = re.search(r"^## \[(\d+\.\d+\.\d+)\]", changelog, re.M)
+latest_ver = re.search(r"^## \[([0-9.]+)\]", changelog, re.M)
 check(ver_m and latest_ver and ver_m.group(1) == latest_ver.group(1),
-      f"SKILL.md 版本与 CHANGELOG 最新条目一致（{ver_m.group(1) if ver_m else '?'} vs {latest_ver.group(1) if latest_ver else '?'}）")
+      f"SKILL 版本 = CHANGELOG 最新（{ver_m.group(1) if ver_m else '?'} vs {latest_ver.group(1) if latest_ver else '?'}）")
+check("## [Unreleased]" not in changelog, "CHANGELOG 无 Unreleased 残留")
+check("版本 3.0.0" not in readme and "Version 3.0.0" not in readme, "README 不硬编码版本号")
+check("当前版本见" in zh_readme and "Current version" in readme, "README 委托版本入口到 SKILL.md")
 
-# ---------- T3 路由一致性 ----------
-section("T3 路由一致性（SKILL.md ↔ references）")
-# SKILL.md 引用的 § 锚点必须能解析到对应文件的实际标题（标题前缀匹配）
-CITED_SECTIONS = {
-    "references/goals.md": ["减脂", "增肌", "局部塑形", "减脂增肌"],
-    "references/venues.md": ["家庭健身", "无器材健身", "健身房", "跑步机", "户外与跑步", "游泳", "徒步"],
-    "references/nutrition.md": ["宏量营养素分配", "三餐模板", "补给品"],
-    "references/adjustments.md": ["第一步：反馈分类", "第二步：按层级调整", "调整输出格式", "训练日志模板"],
-}
-for path, anchors in CITED_SECTIONS.items():
-    body = read(path)
-    headings = re.findall(r"^#{1,3}\s+(.+)", body, re.M)
-    check(f"references/{path.split('/')[-1]}" in skill, f"SKILL.md 引用了 {path}")
-    for a in anchors:
-        hit = [h for h in headings if h.startswith(a)]
-        check(bool(hit), f"{path} 锚点「§{a}」解析到标题: {hit[0] if hit else '未找到'}")
+# ---------- T3 公式与关键数值 ----------
+section("T3 公式与关键数值")
+check("10×体重 + 6.25×身高 − 5×年龄 + 5" in skill, "BMR 男性公式系数正确")
+check("− 161" in skill, "BMR 女性常数 −161")
+check("体重 kg / 身高 cm / 年龄岁" in skill, "BMR 公式标注单位")
+check("1.20×BMI" in skill and "0.23×年龄" in skill and "10.8×性别" in skill and "5.4" in skill,
+      "Deurenberg 成人式系数正确")
+check("±4%" in skill, "Deurenberg 误差标注 ±4%")
+check("1.51×BMI" in read("references/evidence.md"), "Deurenberg 儿童式在 evidence.md")
+check("208−0.7×年龄" in skill, "SKILL 使用 Tanaka 心率公式")
+check("208−0.7×年龄" in read("references/venues.md"), "venues 使用 Tanaka 心率公式")
+check("208−0.7×年龄" in read("references/adjustments.md"), "adjustments 使用 Tanaka")
+check("220−年龄" in read("references/venues.md") and "粗略" in read("references/venues.md"),
+      "220−年龄 仅作粗略估计")
+check("300~500" in skill and "500~1000" in skill, "减脂缺口 300~500 / 激进 500~1000")
+check("1000~1200" in skill and "1200~1500" in skill, "低能量膳食下限区间（女/男）")
+check("0.5~1 kg/周" in skill or "0.5~1 kg/周" in read("references/evidence.md"), "减重速度 0.5~1 kg/周")
+check("24~27.9" in skill and "≥28" in skill, "BMI 中国标准切点")
+check("男 ≥90cm、女 ≥85cm" in skill, "腰围中心型肥胖切点")
+check("85~89.9" in skill and "80~84.9" in skill, "腰围中心型肥胖前期档")
+for f in ["1.2", "1.375", "1.55", "1.725", "1.9"]:
+    check(f in skill, f"TDEE 活动系数 {f}")
+check("已包含" in skill and "不再" in skill, "TDEE 系数标注已含运动、不再叠加")
+check("久坐 1.2 / 轻度 1.375 / 中度 1.55 / 高度 1.725" in skill, "TDEE 活动系数完整表")
+for r in ["1.4~2.0", "1.6~2.2", "1.8~2.4", "2.0~2.4", "2.3~3.1"]:
+    check(r in skill or r in read("references/evidence.md"), f"蛋白质分级 {r} g/kg")
+check("g/kg 体重" in read("references/evidence.md"), "蛋白质口径明确为 g/kg 体重")
+check("体脂偏高者按去脂体重" in skill, "高体脂按去脂体重/目标体重")
+check("减脂 1.8~2.4" in skill, "SKILL 减脂蛋白区间唯一")
+check("1 + 次数/30" in read("references/programs.md"), "1RM 使用 Epley 估算")
+check("不是 ACSM 官方" in read("references/programs.md"), "%1RM 表标注非 ACSM 官方")
+check("6~7 个蛋清" in read("references/nutrition.md"), "蛋白粉↔蛋清换算修正")
+check("24g 蛋白" in read("references/nutrition.md"), "30g 蛋白粉≈24g 蛋白")
+check("6~8 小时" in read("references/nutrition.md"), "咖啡因睡前 6~8h 停用")
+check("200mg" in read("references/nutrition.md"), "孕期咖啡因 ≤200mg")
+check("3~5g" in read("references/nutrition.md"), "肌酸 3~5g/天")
+check("6 周腹部训练" in read("references/goals.md"), "局部减脂有具体证据")
+check("10%~20%" in read("references/evidence.md"), "体脂参考区间存在")
 
-# 运动状态两级路由（v2.2.0）
-venues = read("references/venues.md")
-check("### 第 4 步：按运动状态读对应参考文件" in skill, "SKILL.md 第 4 步按运动状态路由")
-check(all(h in venues for h in ["## 健身房健身", "## 非健身房健身 · 室内", "## 非健身房健身 · 室外运动"]),
-      "venues.md 三大运动状态章节（健身房 / 非健身房室内 / 室外运动）")
-check("### 健身房（器械与自由重量）" in venues and "### 无器材健身（纯自重）" in venues
-      and "### 跑步机（健身房 / 家用）" in venues, "原小节保留为三级锚点")
-check("## 混合状态排期原则" in venues and "混合状态排期原则" in skill, "混合状态排期原则（venues + SKILL 引用一致）")
-
-# 综合运动教练定位与无器材一等公民（v2.3.0）
-programs = read("references/programs.md")
-check("综合运动锻炼教练" in skill, "SKILL.md 定位为综合运动锻炼教练")
-check("排期四" in skill and "无器材版" in skill and "自重进阶四板斧" in skill,
-      "推荐模板含排期四（无器材版 + 自重进阶四板斧）")
-check("自重 / 无器材适配" in programs, "programs.md 含自重/无器材适配注记")
-check("无器械" in (desc_m.group(1) if desc_m else ""), "description 含无器械触发词")
-
-# 其余 L2 关键内容存在
-programs = read("references/programs.md")
-check("7 项" in read("references/body-data.md") and "标准格式" in read("references/body-data.md"),
-      "body-data.md 含 7 项标准格式")
-check("常见训练分化方式" in programs and "渐进超负荷" in programs, "programs.md 含分化库与渐进超负荷")
-
-# 反向：6 个 L2 文件都被 SKILL.md 提及
-for f in ["goals", "venues", "body-data", "nutrition", "programs", "adjustments"]:
-    check(f in skill, f"SKILL.md 提及 references/{f}.md")
-
-# 跨文件引用有效：venues.md 指向 programs.md 的双重渐进法
-venues = read("references/venues.md")
-programs = read("references/programs.md")
-check("渐进超负荷 · 双重渐进法" in venues and "双重渐进法" in programs,
-      "venues.md → programs.md「双重渐进法」引用有效")
-
-# ---------- T4 路径引用 ----------
-section("T4 路径引用（references/*.md 均存在）")
-all_md = {p.relative_to(SKILL_ROOT).as_posix() for p in SKILL_ROOT.rglob("*.md")
-          if "_backups" not in p.parts and "tests" not in p.parts}
+# ---------- T4 路由与锚点 ----------
+section("T4 路由与锚点")
+all_md = {p.relative_to(SKILL_ROOT).as_posix(): p.read_text(encoding="utf-8")
+          for p in SKILL_ROOT.rglob("*.md")
+          if "_backups" not in p.parts and "evals" not in p.parts}
 bad_refs = []
-for f in all_md:
+for f, body in all_md.items():
     if f == "CHANGELOG.md":
         continue
-    for ref in re.findall(r"references/([\w-]+\.md)", read(f)):
+    for ref in re.findall(r"references/([\w-]+\.md)", body):
         if not (SKILL_ROOT / "references" / ref).is_file():
             bad_refs.append(f"{f} → references/{ref}")
-check(not bad_refs, f"无悬空路径引用（坏引用: {bad_refs or '无'}）")
+check(not bad_refs, f"路径引用均有效（坏引用: {bad_refs or '无'}）")
 
-# ---------- T5 领域特定完整性 ----------
-section("T5 领域完整性（v1.5.0 三项优化落地）")
-# 跑步机：坡度 + 配速
-check("### 跑步机（健身房 / 家用）" in venues, "venues.md 含 §跑步机 小节")
-check("慢跑 1%" in venues and "8~12%" in venues, "跑步机坡度默认（慢跑 1% / 坡走 8~12%）")
-check(re.search(r"\d\.\d~\d\.\d km/h", venues) and "Zone 2" in venues, "跑步机配速表与心率区间")
-check("谈话测试" in venues or "能完整说句子" in venues or "还能完整说话" in venues, "谈话测试校准")
-# 力量起始重量
-check("起始重量参考" in venues and "×BW" in venues, "起始重量按 BW 折算表存在")
-check("单边" in venues, "起始重量标注单边/总重")
-check("宁轻勿重" in venues and "12 次" in venues, "自校准规则（12 次余力法 + 宁轻勿重）")
-# 周期规则
-check("默认一周" in skill, "SKILL.md 周期默认一周")
-check("按 4 周滚动" in skill and "按 4 周滚动" in programs, "超四周按 4 周滚动（SKILL.md + programs.md）")
-check("按月滚动" not in skill and "按月滚动" not in programs and "一个月计划" not in programs
-      and "一个月渐进计划" not in skill, "周期单位统一为周（无按月滚动/一个月计划表述）")
-check("1 个月 = 4 周" in skill and "1 个月 = 4 周" in programs, "月→周换算规则（SKILL.md + programs.md）")
-check("第 2 个月" not in venues, "venues.md 升级路径以周表述")
-check("### 第 5 步：按周期搭建计划骨架（默认一周，以周为单位延长）" in skill, "第 5 步标题体现默认一周与周单位")
-check("三阶段结构" not in skill and "12~13 周" not in programs, "独立三个月骨架已移除")
-check("4 周渐进" in skill and "W1 适应周" in programs, "四周 = 4 周渐进结构")
-# 输出格式强制携带
-check("起始重量" in skill.split("## 输出格式")[1], "输出格式强制起始重量")
-check("坡度与配速" in skill.split("## 输出格式")[1], "输出格式强制跑步机坡度配速")
-# 动态调整（v1.6.0）
-adjustments = read("references/adjustments.md")
-check("### 第 7 步：动态调整（回访触发）" in skill, "SKILL.md 含第 7 步动态调整")
-check("不重走第 1~5 步" in skill, "回访不重走采集与计划搭建")
-check(all(k in adjustments for k in ["执行反馈", "进度数据", "条件变化", "疼痛与伤病"]), "反馈四分类齐全")
-check(all(k in adjustments for k in ["L1 参数", "L2 结构", "L3 目标重估"]), "三级调整层级（L1/L2/L3）")
-check("4 周为决策窗口" in adjustments, "进度调整锁 4 周决策窗口")
-check("本周调整" in adjustments and "下次反馈点" in adjustments, "变化对比表 + 下次反馈点输出")
-check("训练日志模板" in skill, "计划交付附训练日志模板（§六）")
-check("双重渐进" in adjustments and "退回上一重量" in adjustments, "力量回调细则（渐进/退阶）")
-check("停 / 换 / 降 / 就医" in adjustments, "伤病安全红线处理规则")
-# 逐日课表输出（v1.6.1）
-check("逐日排表" in skill, "SKILL.md 输出格式强制逐日排表")
-check("不按「力量训练」「有氧训练」" in skill or "不要拆成「力量训练」「有氧训练」" in skill,
-      "SKILL.md 禁止按训练类型分块")
-example = skill.split("输出示例")[1]
-for d in ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]:
-    check(f"| {d} " in example, f"输出示例含{d}行")
-check("主动恢复" in example and "完全休息" in example, "示例含周末恢复/休息行")
-check("逐日课表" in programs, "programs.md 一周计划节强制逐日课表")
+bad_anchors = []
+for f, body in all_md.items():
+    for m in re.finditer(r"references/([\w-]+\.md)`?\s*§([^\s，。；、）)\]]+)", body):
+        target, anchor = m.group(1), m.group(2)
+        target_body = all_md.get(f"references/{target}", "")
+        hs = headings(target_body)
+        if not any(h.startswith(anchor) for h in hs):
+            bad_anchors.append((f, target, anchor))
+check(not bad_anchors, f"所有 §锚点可解析（坏锚点: {bad_anchors or '无'}）")
+for ghost in ["恢复表", "跑步机起步表", "渐进超负荷 · 双重渐进法"]:
+    check(ghost not in skill and ghost not in read("references/venues.md"),
+          f"无幽灵锚点: {ghost}")
 
-# ---------- T6 边界用例 ----------
-section("T6 边界用例")
-check("周末可以训练时才" in skill and "仅当用户明确表示周末可以训练" in programs, "周末默认不排训练（两处一致）")
-check("BMI < 18.5" in skill and "未成年人" in skill, "安全红线（偏瘦减脂沟通 / 未成年人）")
-check("≤10%" in venues, "周跑量增幅 ≤10%")
-check("每周 ≤1 次" in venues, "间歇日每周 ≤1 次")
-check("TDEE − 300~500" in skill or "TDEE − 300~500" in read("references/goals.md"), "减脂缺口上限约束")
-check("不构成医疗建议" in skill, "医疗免责声明")
+# ---------- T5 排期算术与恢复 ----------
+section("T5 排期算术与恢复")
+templates = read("references/templates.md")
+programs = read("references/programs.md")
+venues = read("references/venues.md")
+check("共享总则" in templates, "templates 含共享总则")
+for s in ["排期一", "排期二", "排期三", "排期四"]:
+    check(s in templates and s in skill, f"SKILL 与 templates 均有 {s}")
+check("自重进阶四板斧" in templates, "templates 含自重进阶四板斧")
+check("0.4~0.5×BW" not in templates, "templates 不重复动作库（无 BW 数值表）")
+over_rows = []
+for line in templates.splitlines():
+    if not line.strip().startswith("|") or "×" not in line:
+        continue
+    sets = sum(int(n) for n in re.findall(r"(\d+)\s*×\s*\d", line))
+    core = sum(int(n) for n in re.findall(r"核心\s*(\d+)\s*组", line))
+    total = sets + core
+    if total > 20:
+        over_rows.append((line[:30], total))
+check(not over_rows, f"所有排期行单日组数 ≤20（超限: {over_rows or '无'}）")
+for body, label in ((templates, "templates"), (programs, "programs"), (venues, "venues")):
+    check("60~90" in body, f"{label} 含孤立休息 60~90s")
+    check(("2~3min" in body) or ("2~3 分钟" in body), f"{label} 含复合休息 2~3min")
+check("每块肌群每次只选 1 个动作" not in skill, "已删除「每肌群每次只选 1 动作」矛盾规则")
+check("10~20 个正式组" in skill or "每周 10~20 组" in skill, "每周容量 10~20 组")
+check("≤20 组" in skill and "≤20 组" in programs, "单次容量 ≤20 组")
+check("≥48h" in skill or "≥48h" in programs, "同肌群恢复 ≥48h")
+p4 = templates.split("## 排期四")[1].split("## 输出范例")[0]
+check("| 周三 | 全身 B" in p4, "排期四 周三 = 全身 B")
+check("| 周四 | 休息" in p4, "排期四 周四 = 休息（满足 48h）")
+check("| 周五 | 全身 C" in p4, "排期四 周五 = 全身 C")
+check("| 周四 | 全身 B" not in p4, "排期四 无 B/C 连排")
+check("组间 90s，深蹲类" not in skill + templates, "已删除旧组间 90s 规则")
+p1 = templates.split("## 排期一")[1].split("## 排期二")[0]
+friday = [ln for ln in p1.splitlines() if ln.startswith("| 周五")]
+check(bool(friday) and "核心 3 组" in friday[0], "排期一 周五含核心收尾")
+bad_sets = []
+for line in templates.splitlines():
+    if not line.strip().startswith("|") or "×" not in line:
+        continue
+    for n in re.findall(r"(\d+)\s*×\s*\d", line):
+        if not 2 <= int(n) <= 5:
+            bad_sets.append((n, line[:30]))
+check(not bad_sets, f"每个动作组数在 2~5 组（越界: {bad_sets or '无'}）")
+check("## 恢复与休息" in programs, "programs 保留 §恢复与休息 标题")
+check("| 游泳 |" in skill, "SKILL 路由表含游泳行")
+check("坡走 8~12%" in venues and "慢跑 1%" in venues, "跑步机坡度默认（慢跑 1% / 坡走 8~12%）")
 
-# ---------- T7 模板有效性 ----------
-section("T7 输出格式模板")
-out_fmt = skill.split("## 输出格式")[1]
+# ---------- T6 输出格式 ----------
+section("T6 输出格式")
 for sec_name in ["一、身体数据分析", "二、目标可行性", "三、训练计划", "四、有氧与日常消耗",
                  "五、恢复与注意事项", "六、进度追踪与调整规则", "七、补给建议", "八、饮食安排"]:
-    check(sec_name in out_fmt, f"输出模板含「{sec_name}」")
-check("星期 | 训练内容 | 动作(组×次·起始重量)" in out_fmt, "课表列含起始重量")
+    check(sec_name in skill, f"输出模板含「{sec_name}」")
+check("星期 | 训练内容 | 动作(组×次·起始重量) | 组间休息 | 强度备注" in skill, "课表列名唯一")
+check("省略第七、八节" in skill, "未触发时省略补给/饮食节")
+check("不构成医疗建议" in skill, "输出含免责声明")
+check("本周调整" in read("references/adjustments.md") and "全量周课表" in read("references/adjustments.md"),
+      "调整输出=对比表+全量课表")
+check("训练日志模板" in read("references/adjustments.md"), "调整协议含训练日志模板")
+
+# ---------- T7 README 质量 ----------
+section("T7 README 质量")
+for label in ["## Quick start", "## Triggering", "## What it is", "## Installation",
+              "## Boundaries & safety", "## Development & testing"]:
+    check(label in readme, f"英文 README 含 {label}")
+for label in ["## 快速开始", "## 触发方式", "## 核心能力", "## 安装", "## 文件结构", "## 边界与注意事项"]:
+    check(label in zh_readme, f"中文 README 含 {label}")
+check("一次性追问" not in readme and "一次性追问" not in zh_readme, "README 无「一次性追问」过期表述")
+for body in (readme, zh_readme):
+    check("ConfigStation" not in body and "/Users/" not in body, "README 无私有绝对路径")
+    check("_backups" not in body, "README 树不含 _backups")
+
+# ---------- T8 DESIGN 一致性 ----------
+section("T8 DESIGN 一致性")
+design = read("references/../DESIGN.md")
+check("设计偏离说明" in design, "DESIGN 含设计偏离说明")
+check("L1 core" in design and "3,400" in design, "DESIGN 声明 L1 预算 3,400")
+check("决策 27" in design, "DESIGN 含决策 27")
+for fn in ["goals", "venues", "templates", "technique", "populations", "body-data",
+           "nutrition", "programs", "adjustments", "evidence"]:
+    check(f"{fn}.md" in design, f"DESIGN 架构提及 {fn}.md")
+check("self-improving" not in design, "DESIGN 无死引用")
+check("约 280 行" not in design, "DESIGN 无过期行数口径")
+check("三个排期差异块" not in design, "DESIGN 排期数量已更新")
+
+# ---------- T9 证据来源 ----------
+section("T9 证据来源")
+evidence = read("references/evidence.md")
+for token in ["WHO", "ACSM", "ISSN", "卫健委", "CDC", "USDA", "ACOG", "ESPEN",
+              "中国高血压防治指南", "Tanaka", "Epley", "AWGS", "Gallagher"]:
+    check(token in evidence, f"evidence.md 含来源: {token}")
+for level in ["强", "中", "弱", "共识"]:
+    check(level in evidence, f"evidence.md 含证据强度: {level}")
+check("非 ACSM 官方" in evidence, "活动系数标注非 ACSM 官方")
+check("不存在 ACSM 官方" in evidence and "对照表" in evidence, "声明 %1RM 对照表不存在")
+check("不构成医疗诊断或处方" in evidence, "evidence 含免责话术")
+
+# ---------- T10 安全边界 ----------
+section("T10 安全边界")
+for token in ["≥180/110", "孕期", "未成年人", "BMI <18.5", "进食障碍", "心肌炎",
+              "增殖性视网膜病变", "65+"]:
+    check(token in skill, f"SKILL 红线含: {token}")
+pop = read("references/populations.md")
+for token in ["ACOG", "ESPEN", "SCOFF", "160~179", "≥3 天", "1.0~1.2"]:
+    check(token in pop, f"populations 含: {token}")
+tech = read("references/technique.md")
+for token in ["热身", "Valsalva", "护具", "DOMS", "ramp-up"]:
+    check(token in tech, f"technique 含: {token}")
+
+# ---------- T11 跨文件数值一致性 ----------
+section("T11 跨文件数值一致性")
+allowed_protein = {(1.4, 2.0), (1.6, 2.2), (1.8, 2.4), (2.0, 2.4), (2.3, 3.1), (1.0, 1.2), (1.2, 1.5)}
+bad_protein = []
+for f in ["SKILL.md", "references/goals.md", "references/nutrition.md", "references/evidence.md"]:
+    for m in re.finditer(r"(\d+(?:\.\d+)?)~(?<!\d)(\d+(?:\.\d+)?)\s*g/kg", read(f)):
+        pair = (float(m.group(1)), float(m.group(2)))
+        if pair not in allowed_protein:
+            bad_protein.append((f, pair))
+check(not bad_protein, f"蛋白质区间均在允许集合（越界: {bad_protein or '无'}）")
+check("1.5 g/kg" not in skill and "1.5 g/kg" not in read("references/goals.md"), "无旧版 1.5 g/kg 蛋白口径")
+check("减脂 2~3 次/周" in skill and "减脂 2~3 次/周" in templates, "有氧频次：减脂 2~3 次/周")
+check("增肌/重组 1~2 次/周" in skill and "增肌/重组 1~2 次/周" in templates, "有氧频次：增肌/重组 1~2 次/周")
+check("上胸与胸外延" in read("references/goals.md") and "上胸与胸外延" in templates,
+      "瘦胸方向统一为上胸与胸外延")
+check("强化下胸" not in skill and "强化下胸" not in templates, "无「强化下胸」矛盾表述")
+check("重组 2.0~2.4" in skill, "重组蛋白口径唯一")
+check("2~3min" in skill, "SKILL 含复合休息 2~3min")
+
+# ---------- T12 模板与 evals ----------
+section("T12 模板与 evals")
+evals_path = SKILL_ROOT / "evals" / "evals.json"
+evals = json.loads(evals_path.read_text(encoding="utf-8"))
+check(evals.get("skill_name") == "fitness-coach", "evals skill_name 正确")
+check(evals.get("version") == (ver_m.group(1) if ver_m else ""), "evals version 与 SKILL 一致")
+check(len(evals.get("evals", [])) == 7, "evals 含 7 个行为用例")
+check(len(evals.get("trigger_evals", [])) == 10, "evals 含 10 个触发用例")
+ids = [e.get("id") for e in evals.get("evals", [])] + [e.get("id") for e in evals.get("trigger_evals", [])]
+check(len(ids) == len(set(ids)), "evals id 唯一")
+check(all(e.get("expectations") for e in evals.get("evals", [])), "每个行为用例含 expectations")
+neg = [e for e in evals.get("trigger_evals", []) if not e.get("should_trigger")]
+check(len(neg) == 3, "触发用例含 3 个负例")
+check("with-skill" in read("evals/README.md") and "baseline" in read("evals/README.md"),
+      "evals/README 说明 with-skill vs baseline")
+
+# ---------- T13 卫生与规模 ----------
+section("T13 卫生与规模")
+check(skill.count("\n") <= 230, f"SKILL 行数 ≤230（实际 {skill.count(chr(10))}）")
+check(len(skill) <= 10000, f"SKILL 字符数 ≤10000（实际 {len(skill)}）")
+for p in sorted((SKILL_ROOT / "references").glob("*.md")):
+    check(len(p.read_text(encoding="utf-8")) <= 9000, f"{p.name} 单文件 ≤9000 字符")
+backups = [d for d in (SKILL_ROOT / "_backups").glob("*") if d.is_dir()] if (SKILL_ROOT / "_backups").exists() else []
+check(len(backups) <= 1, f"_backups 仅保留最新 1 份（实际 {len(backups)}）")
+repo_gitignore = (SKILL_ROOT / ".gitignore").read_text(encoding="utf-8")
+check("_backups/" in repo_gitignore, ".gitignore 忽略 _backups/")
+check(not list(SKILL_ROOT.rglob("__pycache__")), "无 __pycache__ 残留")
+
+# ---------- T14 内容一致性（v3.1.0 校准） ----------
+section("T14 内容一致性")
+check("0.3~0.45" in skill and "500~1000" in skill, "SKILL 含缺口 ↔ 速度映射")
+check("140~159/90~99" in skill and "160~179/100~109" in skill, "SKILL 血压分级明确（1 级 / 2 级）")
+check("140~179" not in skill, "SKILL 无「140~179」模糊合并区间")
+check("快车道" in skill and "本次假设" in skill, "SKILL 含快车道规则")
+check("交付前自检" in skill, "SKILL 含交付前自检")
+check("1RM 测试" in skill, "未成年人红线含 1RM 测试")
+check("BMI <17.5" not in skill, "SKILL 不再用 BMI<17.5 作为唯一触发线")
+bd = read("references/body-data.md")
+check("1~12 或 1~30" in bd, "body-data 七项模板允许两种内脏脂肪刻度并注明")
+check("≥15 属明显高值" not in bd, "body-data 无「≥15 属明显高值」孤立阈值")
+check("纵向上升 ≥2 级" in bd, "body-data 内脏脂肪用同设备纵向趋势判读")
+check(">1 kg/周" in read("references/adjustments.md") and ">1 kg/周" in read("references/nutrition.md"),
+      "减重过快阈值统一为 >1 kg/周")
+check(">体重 1%/周" not in read("references/adjustments.md"), "adjustments 无旧 >1%/周 口径")
+check("3×30~60s" not in read("references/goals.md") and "3×30~60s" not in templates,
+      "平板支撑时长统一（无 30~60s）")
+check("48~72 h 不缓解" in read("references/technique.md"), "损伤判定统一为 48~72h")
+check(">1 周不缓解" not in read("references/technique.md"), "technique 无 >1 周口径")
+check("慢性高血压已控制" in read("references/populations.md"), "妊娠期高血压在相对禁忌中限定为已控制")
+check("不推荐五分化" not in templates, "templates 无「不推荐五分化」矛盾表述")
+check("与性别无关" in templates, "分化按可训练天数而非性别")
+check("每周 3~5 次" not in venues, "venues 有氧频次与 SKILL 对齐（无 3~5 次）")
+check("Borg 11~13" in venues, "venues 标注 RPE 量表换算口径")
+check("RPE 11~13" not in venues and "RPE 11~13" not in read("references/populations.md"),
+      "有氧/孕期 RPE 统一为 10 分制（无 11~13 混用）")
+for f in ["references/body-data.md", "references/populations.md", "references/technique.md"]:
+    check("完整出处与 URL" not in read(f), f"{f} 不再声称提供 URL")
 
 # ---------- Summary ----------
 section("SUMMARY")
 total = passed + failed
 print(f"  Score: {passed}/{total} ({passed / total * 100:.0f}%)")
+if failures:
+    print("  Failures:")
+    for f in failures:
+        print(f"   - {f}")
 sys.exit(0 if failed == 0 else 1)

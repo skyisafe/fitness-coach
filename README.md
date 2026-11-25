@@ -1,111 +1,120 @@
-# fitness-coach · 综合运动锻炼教练
+# fitness-coach · All-Around Fitness Coach
 
-为 AI Agent 提供综合运动锻炼教练能力：基于身体数据分析（BMI、基础代谢、每日总消耗），生成科学、可执行、带进阶机制的周期化运动计划——健身房器械力量、居家无器材自重、跑步、游泳、徒步同等覆盖，并精通营养学与体重控制。
+**English** | [简体中文](README.zh-CN.md)
 
-> 版本 v2.3.1 ｜ MIT License ｜ 无运行时依赖
+> MIT License ｜ No runtime dependencies ｜ Current version: see `SKILL.md`
 
-## 概述
+An AI Agent skill for all-around fitness coaching: it analyzes body data (BMI, BMR, TDEE), then builds a scientific, actionable, periodized training plan with progression built in — gym strength training, home bodyweight training, running, cycling, swimming, and hiking are covered equally — backed by evidence-based nutrition and weight-management knowledge.
 
-- 一句话定位：输入身体数据、运动状态与目标，输出可照做的运动计划——健身房力量、居家自重、户外耐力全覆盖；问营养与补给，给克制的循证建议。
-- 类型：知识 + 工作流型 skill（无脚本），主文件精简，领域细节按需从 references 加载，控制上下文成本；同类知识单一事实源维护（训练分化模板只在 programs.md，运动状态文件只放动作库），避免跨文件漂移。
+> Language note: the skill's instructions and reference files are written in Chinese, and the coach replies in Chinese. This English README (and the [Chinese edition](README.zh-CN.md)) exists so the project can be discovered and reviewed internationally.
 
-## 适用场景
+## What it is
 
-- 健身目标：减肥、增肌、瘦胸、瘦肚、瘦腰、减脂增肌
-- 运动状态：健身房健身（器械 / 自由重量 / 跑步机）；非健身房健身——室内（无器材、家庭小器材）+ 室外运动（户外跑步、游泳、徒步），支持多状态组合排期
-- 计划周期（以周为单位）：一周（默认，可循环）、两周、四周（4 周渐进）、八周、十二周等；更久按 4 周滚动续排，月表述按 1 个月 = 4 周换算
-- 动态调整：用户按训练日志模板回报重量组次 / 心率配速 / 体重腰围 / 伤病日程变化后，按「反馈四分类 → L1 参数 / L2 结构 / L3 目标重估」回调计划，输出「变化对比表 + 调整后全量周课表」，任何时刻都有一张可直接照练的完整课表
-- 推荐模板：内置四套现成模板选型——排期一「增肌减脂 · 薄肌身材」（每周 4 练）、排期二「瘦胖子版 · 减腰脂 + 改善脂肪胸」、排期三「三分化背腿胸」（每周 3 练）、排期四「无器材版 · 居家/出差自重」（每周 3~4 练，含自重进阶四板斧），共享总则与 BW 起始重量动作库，索要现成方案时按体型与场景选型直接输出并代入个人数据
-- 数字化起步：力量动作按体重比例给推荐起始公斤数（含 RPE 自校准规则），跑步机给推荐坡度、配速与心率微调规则
-- 训练分化：按每周 2~6 天匹配标准分化（全身 A/B、全身 ×3、上下分化、推拉腿 PPL、Arnold 分化），内置按目标的 %1RM 参数速查与渐进超负荷、恢复时间表；排期默认周一至周五，周末为休息/主动恢复；一周计划以逐日课表输出（周一至周日每天一行，当天内容直接写在行内，不按训练类型分块）
-- 按需扩展：早中晚三餐饮食安排、蛋白粉与肌酸等补给建议（默认不主动推荐）
-- 信息采集：选项框分步引导（训练背景 → 时间投入 → 伤病与身体数据），每步一屏、点选即答，答案驱动下一步；支持从体脂秤截图 / InBody 报告照片中提取数据并转化为标准格式分析（转写带自检公式与机器口径校验）
+- One-liner: given body data, training setting, and goal, output a plan the user can follow as-is — gym strength, home bodyweight, and outdoor endurance all included; ask about nutrition and supplements to get restrained, evidence-based advice.
+- Who is this for: people who want fat loss, muscle gain, recomposition, or general fitness; users with smart-scale / InBody data who need it interpreted; users who want a ready-to-follow weekly plan that adapts to feedback.
+- Who it is not for: competitive sports preparation, injury rehabilitation prescriptions, or medical nutrition therapy — those need professionals.
+- Type: knowledge + workflow skill (no scripts). The main file stays lean; domain knowledge loads on demand from `references/`, keeping context cost proportional to the request. Numbers live in a single source of truth (`references/evidence.md`), so the same threshold is never maintained in two places.
 
-## 安装
+## When to use
 
-本 skill 采用通用的 `SKILL.md + references/` 结构，无运行时依赖。把仓库放进 Agent 的技能目录即可（如 `~/.claude/skills/`、`~/.codex/skills/`，或 SkillsManager 管理的技能目录）：
+- Goals: fat loss, muscle gain, slimming chest/waist/abdomen, body recomposition, general fitness.
+- Training settings: gym (machines / free weights / treadmill); non-gym — indoor (bodyweight, home equipment, cardio machines) and outdoor (running, cycling, swimming, hiking). Multi-setting combinations are supported.
+- Plan horizons, in weeks: one week (default, repeatable), two weeks, four weeks (4-week progression), eight weeks and beyond; longer plans roll forward in 4-week blocks; month wording is converted at 1 month = 4 weeks.
+- Dynamic adjustment: after the user reports weights/reps, heart rate/pace, weight/waist changes, or injury/schedule changes, the plan is adjusted along "feedback classification → L1 parameters / L2 structure / L3 goal reassessment". Every adjustment ships a "changes table + full updated weekly schedule", so the user always has a complete plan to follow.
+- Ready-made templates: four built-in schedules — Schedule 1 "lean-bulk / recomp, 4 sessions/week", Schedule 2 "skinny-fat variant: waist fat + chest appearance", Schedule 3 "3-day split: back / legs / chest", Schedule 4 "no-equipment bodyweight: home / travel, 3–4 sessions/week" — with shared rules and a bodyweight-based starting-weight table, personal data filled in on request.
+- Concrete starting numbers: strength exercises get recommended starting weights by bodyweight ratio (with RPE self-calibration); treadmill and cardio-machine sessions get incline, pace, cadence, and heart-rate guidance.
+- Pre-delivery self-check: deficit ↔ rate ↔ timeline, every lift's sets/reps and starting weight, all four cardio elements, protein grams, and the 8-section structure — plans whose numbers don't add up are not shipped.
+- Technique & special populations: warm-up, technique cues for 8 core lifts, breathing/bracing, and belt use; dedicated guidance for women (cycle, perimenopause, pregnancy, postpartum), adults 65+, minors, controlled hypertension/type-2 diabetes, and eating-disorder risk.
+- On demand: three-meal nutrition plans and supplement advice (protein powder, creatine, caffeine) — not offered unless asked.
+- Intake: step-by-step guided questions through option pickers (training background → time budget → injuries & body data); supports extracting body-composition data from smart-scale screenshots / InBody reports and converting it into a standard format (with self-check formulas and device-caliber validation).
+
+## Installation
+
+The skill uses the common `SKILL.md + references/` layout and has no runtime dependencies. Put the repository into your Agent's skills directory (e.g. `~/.claude/skills/`, `~/.codex/skills/`, or a directory managed by SkillsManager):
 
 ```bash
-# 方式一：直接克隆到技能目录
+# Option 1: clone straight into the skills directory
 git clone https://github.com/<your-name>/fitness-coach.git ~/.claude/skills/fitness-coach
 
-# 方式二：克隆到任意位置后建立符号链接
+# Option 2: clone anywhere, then symlink it
 git clone https://github.com/<your-name>/fitness-coach.git ~/code/fitness-coach
 ln -s ~/code/fitness-coach ~/.claude/skills/fitness-coach
 ```
 
-目录结构：
+Repository layout:
 
 ```text
 fitness-coach/
-├── SKILL.md            主流程：工作流、核心公式、输出格式、安全红线
-├── README.md
-├── DESIGN.md
-├── CHANGELOG.md
+├── SKILL.md            Main workflow, core formulas, output format, safety red lines
+├── README.md           English README (default)
+├── README.zh-CN.md     Chinese README
+├── DESIGN.md           Architecture, token budget, design decisions
+├── CHANGELOG.md        Version history
 ├── LICENSE
+├── evals/
+│   ├── evals.json      Behavioral evaluation cases (7 real prompts + expectations)
+│   └── README.md       How to run and grade the evals
 ├── tests/
-│   └── test.py         自动化结构测试（python3 tests/test.py）
+│   └── test.py         Structural + numeric assertions (python3 tests/test.py)
 ├── .github/
 │   └── workflows/
-│       └── test.yml    CI：push / PR 自动运行结构测试
+│       └── test.yml    CI: run tests on push / PR
 └── references/
-    ├── goals.md        目标策略库
-    ├── venues.md       运动状态动作库（健身房 / 非健身房·室内 / 非健身房·室外，含跑步机课结构与起始重量表）
-    ├── body-data.md    体成分数据提取与解读（体脂秤/InBody，支持图片）
-    ├── nutrition.md    营养与补给
-    ├── programs.md     周期计划骨架
-    └── adjustments.md  动态调整协议（回访调整）
+    ├── goals.md        Goal strategies + how to set a target when the user has none
+    ├── venues.md       Training-setting movement library (gym / indoor / outdoor, incl. treadmill, cardio machines, cycling, swimming, hiking)
+    ├── templates.md    Ready-made schedules (shared rules + 4 schedules + output example)
+    ├── technique.md    Warm-up, 8 core lifts, breathing/bracing, belts, DOMS vs injury
+    ├── populations.md  Women, 65+, minors, controlled hypertension/T2D, eating disorders
+    ├── body-data.md    Body-composition extraction and interpretation (smart scales / InBody, image support)
+    ├── nutrition.md    Nutrition, meal templates, supplements, fasted training
+    ├── programs.md     Periodization skeletons, split library, progressive overload, recovery
+    ├── adjustments.md  Dynamic adjustment protocol (follow-up visits)
+    └── evidence.md     Authoritative sources, chosen thresholds, evidence strength
 ```
 
-## 快速开始
+## Quick start
 
-1. 直接描述诉求并附上身体数据：「我 30 岁 175cm 78kg 想减脂，健身房每周 3 练，做个四周计划」
-2. 数据不全时教练会通过选项框分步引导补齐（训练背景 → 时间投入 → 伤病与身体数据；性别、身高、体重等自由数值用一条文字消息补问）；计划周期默认一周，需要更长（如四周、八周）请在消息里说明
-3. 需要饮食或补给建议时单独提出：「帮我安排减脂期三餐」「蛋白粉和肌酸怎么选」
+1. Describe your request with body data: "I'm 30, 175 cm, 78 kg, want to lose fat, gym 3×/week, make me a four-week plan."
+2. Missing data is collected step by step (basic info → training background → time budget → injuries & body data); free-form values such as sex, height, and weight are asked in a single text message. If the six basics (sex, age, height, weight, goal, training setting) are already given, intake is skipped and the plan ships immediately, opening with a one-line "assumptions" note. Say "use defaults" to skip the rest. The plan horizon defaults to one week — ask for two/four/eight weeks explicitly if needed.
+3. Ask for nutrition or supplement advice separately: "Plan my three meals for fat loss", "Should I buy protein powder and creatine?", "What about fasted cardio?".
+4. Come back with training feedback ("week 2: squatting 40 kg for 12 easy reps") to enter the adjustment loop.
 
-## 触发方式
+## Triggering
 
-- 自动触发：消息中出现健身、锻炼、运动、减肥、增肌、瘦肚子、塑形、体脂、食谱、蛋白粉、肌酸、跑步、游泳、徒步、无器械、自重等关键词时自动加载
-- 强制触发：`/fitness-coach 你的问题`
+- Automatic: the skill loads when the message mentions 健身, 锻炼, 减脂, 减重, 减肥, 增肌, 塑形, 体能, 体脂, 体脂秤, 腹肌, 臀腿, 瘦肚瘦腰, 哑铃, 弹力带, 无器械, 出差, 宿舍, 三餐食谱, 蛋白粉, 肌酸, 跑步, 游泳, 徒步, 训练计划, etc. (Chinese keywords — the skill is Chinese-first).
+- Manual: `/fitness-coach your question`.
+- The authoritative trigger list is the `description` / `triggers` fields in `SKILL.md`; this README does not duplicate it.
 
-## 边界与注意事项
+## Boundaries & safety
 
-- 计划与饮食建议不构成医疗建议；有慢性病、孕期、伤病史等情况，skill 会先建议就医评估
-- 体脂率等数据在用户未提供时为公式估算值，精度低于专业仪器（DEXA、InBody）
-- 不覆盖竞技备赛、损伤康复处方、疾病医疗营养治疗
+- Plans and nutrition advice are not medical advice. The skill asks users to see a doctor first for: blood pressure ≥180/110, unexplained syncope/chest pain, recent myocarditis, pregnancy complications, uncontrolled proliferative retinopathy, eating-disorder risk or BMI <18.5 with rapid weight loss, unassessed osteoporosis in adults 65+, and weight-loss requests from minors.
+- Body-fat figures are formula estimates when the user provides no measurement, and are less accurate than professional devices (DEXA, InBody). Smart-scale muscle rate, visceral-fat grade, and bone mass are manufacturer models — not medical standards.
+- Out of scope: competitive sports preparation, injury rehabilitation prescriptions, and medical nutrition therapy.
+- Numbers and sources are maintained in `references/evidence.md`; when two files disagree, that file wins. Do not duplicate thresholds elsewhere.
+- Current version: see the `version` field in `SKILL.md`; history in `CHANGELOG.md`; design trade-offs in `DESIGN.md`.
 
-## 使用示例
+## Development & testing
 
-- 「我 28 岁 175cm 85kg 想瘦肚子，家里有可调哑铃，做个四周计划」
-- 「出差一周，酒店里什么器材都没有，帮我排个徒手计划」
-- 「在家无器械怎么练背和腿？」
-- 「增肌期三餐怎么吃？蛋白粉要不要买？」
-- 「帮我排一个游泳 + 健身房结合的每周计划」
-- 「跑步机减脂，坡度和速度该调多少？」
-- 「新手练背，高位下拉和坐姿划船用多少公斤？」
-- 「第二周了，深蹲 40kg 能轻松做满 12 次，帮我调一下」
-- 「下周出差没法去健身房，计划怎么改？」
-
-## 开发与测试
-
-无需安装依赖，Python 3.9+ 即可运行结构测试：
+No dependencies; Python 3.9+.
 
 ```bash
 python3 tests/test.py
 ```
 
-测试覆盖文件完整性、frontmatter 规范、路由锚点、领域参数与输出模板（当前 110 项断言，100% 通过）；CI 在 push / PR 时自动执行同一套测试。
+The suite covers file completeness, bilingual README links, frontmatter rules, formula coefficients, numeric fact tables, schedule volume arithmetic, recovery spacing, routing anchors, README file-tree consistency, version consistency, description triggers/over-promises, output-format columns, design-time token budget, and cross-file content consistency (red-line tiers, single-source thresholds, fast-lane and pre-delivery self-check presence). CI runs the same suite on every push and pull request.
 
-## 发布到 GitHub
+Behavioral evals are in `evals/evals.json`; see `evals/README.md` for how to run them against the skill and a baseline.
 
-仓库已完成本地初始化（`main` 分支 + `v2.3.1` tag）。首次发布时：
+## Publishing to GitHub
+
+The repository is initialized locally on `main`. Create and push tags for released versions as needed:
 
 ```bash
 git remote add origin git@github.com:<your-name>/fitness-coach.git
 git push -u origin main
-git push origin v2.3.1
+git push origin --tags
 ```
 
-## 许可证
+## License
 
 [MIT](LICENSE) © 2026 shiyu
